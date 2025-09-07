@@ -8,102 +8,98 @@
 #include <filesystem>
 
 struct file_info {
-    std::string file_name;
+
     std::queue<std::string> q;
+
+    std::string file_name;
     std::string source_dir;
     std::string destination_dir;
+
+    int n;
+
     pthread_mutex_t queue_mutex;
-    pthread_cond_t isEmpty;
-    pthread_cond_t isNotEmpty;
+    pthread_cond_t startRead;
+    pthread_cond_t startWrite;
 };
 
-// void *read_file(void* args) {
-//     //As soon as file_info that is incoming is dereferenced then it creates a new file_info f within the stack with all the variable with the new
-//     struct file_info* f = static_cast<file_info*>(args);
 
-    
-//     std::string file_path = f->source_dir + "/" + f->file_name;
-    
-//     std::ifstream inputFiles(file_path);
-//     std::string content;
-    
-//     while(getline(inputFiles, content)) {
-//         pthread_mutex_lock(&f->queue_mutex);
-//         f->q.push(content);
-//         pthread_cond_signal(&f->isNotEmpty);
-//         pthread_mutex_unlock(&f->queue_mutex);
-//     }
+void* read_from_file(void* args) {
+    struct file_info *f = static_cast<file_info*>(args);
 
-//     inputFiles.close();
+    std::ifstream in_file(f->source_dir + "/" + f->file_name);
 
-//     return 0;
-// }
+    std::string temp_line;
+    while(std::getline(in_file,temp_line)) {
+        pthread_mutex_lock(&f->queue_mutex);
 
-// void *write_to_queue(void* args) {
-//     struct file_info* f = static_cast<file_info*>(args);
+        while(f->q.size() >= f->n) {
+            pthread_cond_wait(&f->startRead, &f->queue_mutex);
+        }
 
-//     pthread_mutex_lock(&f->queue_mutex);
+        f->q.push(temp_line);
+        std::cout << temp_line << std::endl;
+        pthread_mutex_unlock(&f->queue_mutex);
+        pthread_cond_signal(&f->startWrite);
+    }
 
-//     std::ofstream outputFiles;
-//     outputFiles.open(f->destination_dir + "/" + f->file_name, std::ios::binary);
+    return nullptr;
+};
 
-//     std::string content;
-//     while(f->q.empty()) {
-//         pthread_cond_wait(&f->isNotEmpty, &f->queue_mutex);
-//         content = f->q.front();
-//         f->q.pop();
-//         outputFiles << content << '\n';
-        
-//         if(f->q.empty()) {
-//             pthread_mutex_unlock(&f->queue_mutex);
-//             break;
-//         }
-        
-//     }
+void* write_from_queue(void* args) {
+    struct file_info *f = static_cast<file_info*>(args);
 
-//     pthread_cond_signal(&f->isEmpty);
-//     pthread_mutex_unlock(&f->queue_mutex);
+    std::ofstream out_file(f->destination_dir);
 
-//     outputFiles.close();
+    while(true) {
+        pthread_mutex_lock(&f->queue_mutex);
 
-//     return 0;
-// }
+        while(f->q.empty()) {
+            pthread_cond_wait(&f->startWrite,&f->queue_mutex);
+        }
 
-void *read_file(void* args) {};
-void *write_from_queue(void* args) {};
+        std::string content = f->q.front();
+        std::cout << content << std::endl;
+        f->q.pop();
+
+        pthread_mutex_unlock(&f->queue_mutex);
+        pthread_cond_signal(&f->startRead);
+
+        out_file << content << '\n';
+    }
+
+    return nullptr;
+};
+
 
 int main(int args, char* argv[]) {
     struct file_info f;
 
-    int n = std::stoi(argv[1]);
-    std::string source_dir = argv[2];
-    std::string destination_dir = argv[3];
+    //Getting the value from a comand
+    f.n = std::stoi(argv[1]);
+    f.source_dir = argv[2];
+    f.destination_dir = argv[3];
+
+    f.file_name = "source.txt";
 
     pthread_t p_read, p_write;
 
-    std::queue<std::string> q;
-    const int word_limit = 20;
+    //Initializing Mutex locks and condition
+    pthread_mutex_init(&f.queue_mutex, NULL);
+    pthread_cond_init(&f.startRead, NULL);
+    pthread_cond_init(&f.startWrite, NULL);
 
-    // pthread_mutex_init(&f.queue_mutex,NULL);
-    // pthread_cond_init(&f.isEmpty, NULL);
-    // pthread_cond_init(&f.isNotEmpty, NULL);
+    //Creating a thread for Producer and Consumer
+    pthread_create(&p_read, NULL, read_from_file, &f);
+    pthread_create(&p_write, NULL, write_from_queue, &f);
 
-    f.file_name = "source.txt";
-    f.source_dir = source_dir;
-    f.destination_dir = destination_dir;
+    //Waits all the therad to finish it's process before the main runs
+    pthread_join(p_read, NULL);
+    pthread_join(p_write, NULL);
 
-    pthread_create(&p_read,NULL,read_file,&f);
-    pthread_create(&p_write,NULL, write_from_queue, &f);
 
-    pthread_join(p_read,NULL);
-    pthread_join(p_write,NULL);
-
-    // pthread_mutex_destroy(&f.queue_mutex);
-    // pthread_cond_destroy(&f.isEmpty);
-    // pthread_cond_destroy(&f.isNotEmpty);
-
-    free(p_read);
-    free(p_write);
+    pthread_mutex_destroy(&f.queue_mutex);
+    pthread_cond_destroy(&f.startRead);
+    pthread_cond_destroy(&f.startWrite);
 
     return 0;
 }
