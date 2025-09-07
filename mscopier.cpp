@@ -16,6 +16,7 @@ struct file_info {
     std::string destination_dir;
 
     int n;
+    bool done = false;
 
     pthread_mutex_t queue_mutex;
     pthread_cond_t startRead;
@@ -25,8 +26,9 @@ struct file_info {
 
 void* read_from_file(void* args) {
     struct file_info *f = static_cast<file_info*>(args);
+    std::string file_path = f->source_dir + "/" + f->file_name;
 
-    std::ifstream in_file(f->source_dir + "/" + f->file_name);
+    std::ifstream in_file(file_path);
 
     std::string temp_line;
     while(std::getline(in_file,temp_line)) {
@@ -37,10 +39,15 @@ void* read_from_file(void* args) {
         }
 
         f->q.push(temp_line);
-        std::cout << temp_line << std::endl;
-        pthread_mutex_unlock(&f->queue_mutex);
         pthread_cond_signal(&f->startWrite);
+        pthread_mutex_unlock(&f->queue_mutex);
     }
+
+    pthread_mutex_lock(&f->queue_mutex);
+    f->done = true;
+    pthread_cond_broadcast(&f->startWrite);
+    pthread_mutex_unlock(&f->queue_mutex);
+
 
     return nullptr;
 };
@@ -48,23 +55,26 @@ void* read_from_file(void* args) {
 void* write_from_queue(void* args) {
     struct file_info *f = static_cast<file_info*>(args);
 
-    std::ofstream out_file(f->destination_dir);
+    std::ofstream out_file(f->destination_dir + "/" + f->file_name);
 
-    while(true) {
+    while(true) {        
         pthread_mutex_lock(&f->queue_mutex);
-
-        while(f->q.empty()) {
+        while(f->q.empty() && !f->done) {
             pthread_cond_wait(&f->startWrite,&f->queue_mutex);
         }
 
+        if(f->q.empty() && f->done) {
+            pthread_mutex_unlock(&f->queue_mutex);
+            break;
+        }
         std::string content = f->q.front();
         std::cout << content << std::endl;
         f->q.pop();
 
-        pthread_mutex_unlock(&f->queue_mutex);
         pthread_cond_signal(&f->startRead);
-
+        
         out_file << content << '\n';
+        pthread_mutex_unlock(&f->queue_mutex);
     }
 
     return nullptr;
@@ -75,7 +85,7 @@ int main(int args, char* argv[]) {
     struct file_info f;
 
     //Getting the value from a comand
-    f.n = std::stoi(argv[1]);
+    f.n = 20;
     f.source_dir = argv[2];
     f.destination_dir = argv[3];
 
